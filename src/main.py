@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel
-from database import get_db_connection
+from src.database import get_db_connection
 import bcrypt
 import datetime
 
