@@ -245,3 +245,96 @@ def ranking_ciudad(municipio: str):
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=500, detail=str(e))
+    
+    # --- MODELOS PARA EQUIPOS ---
+class EquipoCreate(BaseModel):
+    nombre: str
+    descripcion: str
+    ciudad_base: str
+
+class UnirseEquipoRequest(BaseModel):
+    id_runner: int
+    id_equipo: int
+
+# --- ENDPOINTS DE EQUIPOS ---
+
+@app.post("/equipos")
+def crear_equipo(equipo: EquipoCreate):
+    conn = get_db_connection()
+    if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
+    
+    try:
+        cur = conn.cursor()
+        sql = """
+            INSERT INTO equipo (nombre, descripcion, ciudad_base)
+            VALUES (%s, %s, %s)
+            RETURNING id_equipo;
+        """
+        cur.execute(sql, (equipo.nombre, equipo.descripcion, equipo.ciudad_base))
+        id_equipo = cur.fetchone()[0]
+        conn.commit()
+        cur.close(); conn.close()
+        
+        return {"mensaje": "¡Equipo Fundado! 🛡️", "id_equipo": id_equipo, "nombre": equipo.nombre}
+        
+    except Exception as e:
+        if conn: conn.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/equipos/unirse")
+def unirse_equipo(datos: UnirseEquipoRequest):
+    conn = get_db_connection()
+    if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
+    
+    try:
+        cur = conn.cursor()
+        
+        # 1. Verificar si ya está en ese equipo (Opcional, pero recomendado)
+        # 2. Insertar en la tabla intermedia 'runner_equipo'
+        # Asumimos rol 'Miembro' por defecto
+        sql = """
+            INSERT INTO runner_equipo (id_runner, id_equipo, rol, fecha_union)
+            VALUES (%s, %s, 'Miembro', %s)
+            RETURNING fecha_union;
+        """
+        ahora = datetime.datetime.now()
+        cur.execute(sql, (datos.id_runner, datos.id_equipo, ahora))
+        
+        conn.commit()
+        cur.close(); conn.close()
+        
+        return {
+            "mensaje": "¡Te has unido al equipo! 🤝",
+            "equipo_id": datos.id_equipo,
+            "usuario_id": datos.id_runner
+        }
+        
+    except Exception as e:
+        if conn: conn.rollback()
+        # Este error salta si el usuario ya está en el equipo (violación de clave primaria compuesta)
+        raise HTTPException(status_code=400, detail=f"No puedes unirte (¿Ya estás dentro?): {str(e)}")
+
+@app.get("/equipos/{id_equipo}/miembros")
+def ver_miembros_equipo(id_equipo: int):
+    conn = get_db_connection()
+    if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
+    
+    try:
+        cur = conn.cursor()
+        # Hacemos un JOIN para sacar los nombres de los runners de ese equipo
+        sql = """
+            SELECT r.username, re.rol, re.fecha_union
+            FROM runner_equipo re
+            JOIN runner r ON re.id_runner = r.id_runner
+            WHERE re.id_equipo = %s;
+        """
+        cur.execute(sql, (id_equipo,))
+        miembros = cur.fetchall()
+        cur.close(); conn.close()
+        
+        lista = [{"usuario": m[0], "rol": m[1], "desde": m[2]} for m in miembros]
+        return {"id_equipo": id_equipo, "total_miembros": len(lista), "miembros": lista}
+        
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
