@@ -3,7 +3,8 @@ from pydantic import BaseModel
 from src.database import get_db_connection
 import bcrypt
 import datetime
-from src.routers import logros # Importamos el archivo entero
+
+from src.routers import auth, logros, mapas, temporadas, ranking
 
 app = FastAPI(
     title="RunnerApp API",
@@ -12,6 +13,9 @@ app = FastAPI(
 )
 
 app.include_router(logros.router)
+app.include_router(mapas.router)
+app.include_router(temporadas.router)
+app.include_router(ranking.router)
 
 # --- SEGURIDAD ---
 def encriptar_password(password: str):
@@ -166,88 +170,7 @@ def registrar_captura(datos: CapturaCreate):
         if conn: conn.rollback()
         raise HTTPException(status_code=400, detail=str(e))
     
-    # --- ENDPOINTS DE RANKING (PROFESIONALES) ---
 
-@app.get("/ranking/global")
-def ranking_global():
-    """Top 10 jugadores con más puntos en todo el juego"""
-    conn = get_db_connection()
-    if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
-    
-    try:
-        cur = conn.cursor()
-        sql = """
-            SELECT r.username, SUM(cz.puntos_ganados) as total
-            FROM captura_zona cz
-            JOIN runner r ON cz.id_runner = r.id_runner
-            GROUP BY r.username
-            ORDER BY total DESC
-            LIMIT 10;
-        """
-        cur.execute(sql)
-        resultados = cur.fetchall()
-        cur.close(); conn.close()
-        
-        return {"titulo": "🏆 TOP MUNDIAL", "ranking": [{"pos": i+1, "user": r[0], "pts": r[1]} for i, r in enumerate(resultados)]}
-    except Exception as e:
-        conn.close()
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/ranking/pais/{pais}")
-def ranking_pais(pais: str):
-    """Top 10 jugadores con más puntos en un país concreto (ej: España)"""
-    conn = get_db_connection()
-    if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
-    
-    try:
-        cur = conn.cursor()
-        # Aquí hacemos un JOIN extra con la tabla ZONA para filtrar por 'pais'
-        sql = """
-            SELECT r.username, SUM(cz.puntos_ganados) as total
-            FROM captura_zona cz
-            JOIN runner r ON cz.id_runner = r.id_runner
-            JOIN zona z ON cz.id_zona = z.id_zona
-            WHERE z.pais = %s
-            GROUP BY r.username
-            ORDER BY total DESC
-            LIMIT 10;
-        """
-        cur.execute(sql, (pais,))
-        resultados = cur.fetchall()
-        cur.close(); conn.close()
-        
-        return {"titulo": f"🇪🇸 TOP {pais.upper()}", "ranking": [{"pos": i+1, "user": r[0], "pts": r[1]} for i, r in enumerate(resultados)]}
-    except Exception as e:
-        conn.close()
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/ranking/ciudad/{municipio}")
-def ranking_ciudad(municipio: str):
-    """Top 10 jugadores en una ciudad concreta (ej: Madrid)"""
-    conn = get_db_connection()
-    if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
-    
-    try:
-        cur = conn.cursor()
-        # Filtramos por 'municipio'
-        sql = """
-            SELECT r.username, SUM(cz.puntos_ganados) as total
-            FROM captura_zona cz
-            JOIN runner r ON cz.id_runner = r.id_runner
-            JOIN zona z ON cz.id_zona = z.id_zona
-            WHERE z.municipio = %s
-            GROUP BY r.username
-            ORDER BY total DESC
-            LIMIT 10;
-        """
-        cur.execute(sql, (municipio,))
-        resultados = cur.fetchall()
-        cur.close(); conn.close()
-        
-        return {"titulo": f"🏙️ TOP {municipio.upper()}", "ranking": [{"pos": i+1, "user": r[0], "pts": r[1]} for i, r in enumerate(resultados)]}
-    except Exception as e:
-        conn.close()
-        raise HTTPException(status_code=500, detail=str(e))
     
     # --- MODELOS PARA EQUIPOS ---
 class EquipoCreate(BaseModel):
