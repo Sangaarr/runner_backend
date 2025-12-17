@@ -13,8 +13,6 @@ app = FastAPI(
 )
 
 app.include_router(logros.router)
-app.include_router(mapas.router)
-app.include_router(temporadas.router)
 app.include_router(ranking.router)
 
 # --- SEGURIDAD ---
