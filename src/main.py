@@ -338,3 +338,185 @@ def ver_miembros_equipo(id_equipo: int):
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=500, detail=str(e))
+    
+    # --- MODELOS SOCIALES ---
+class SeguirRequest(BaseModel):
+    id_seguidor: int
+    id_seguido: int
+
+# --- ENDPOINTS SOCIALES (ADAPTADOS A TU DB REAL) ---
+
+@app.post("/social/seguir")
+def seguir_usuario(datos: SeguirRequest):
+    if datos.id_seguidor == datos.id_seguido:
+        raise HTTPException(status_code=400, detail="No puedes seguirte a ti mismo")
+        
+    conn = get_db_connection()
+    if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
+    
+    try:
+        cur = conn.cursor()
+        
+        # 1. INSERTAR EN TABLA 'seguidor'
+        # Asumiendo columnas: id_seguidor, id_seguido, fecha_desde
+        sql_seguir = """
+            INSERT INTO seguidor (id_seguidor, id_seguido, fecha_desde)
+            VALUES (%s, %s, %s);
+        """
+        ahora = datetime.datetime.now()
+        cur.execute(sql_seguir, (datos.id_seguidor, datos.id_seguido, ahora))
+        
+        # 2. INSERTAR EN TABLA 'notificacion'
+        # Usamos TUS columnas exactas: id_runner, tipo, titulo, mensaje, leida, fecha_hora
+        sql_notif = """
+            INSERT INTO notificacion (id_runner, tipo, titulo, mensaje, leida, fecha_hora)
+            VALUES (%s, 'SOCIAL', 'Nuevo Seguidor', '¡Alguien ha empezado a seguirte!', FALSE, %s);
+        """
+        cur.execute(sql_notif, (datos.id_seguido, ahora))
+        
+        conn.commit()
+        cur.close(); conn.close()
+        return {"mensaje": "¡Ahora sigues a este usuario! 👀"}
+        
+    except Exception as e:
+        if conn: conn.rollback()
+        raise HTTPException(status_code=400, detail=f"Error (¿Ya lo sigues?): {str(e)}")
+
+@app.get("/social/feed/{id_mi_usuario}")
+def obtener_feed_amigos(id_mi_usuario: int):
+    """Muestra las capturas de la gente a la que sigues"""
+    conn = get_db_connection()
+    if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
+    
+    try:
+        cur = conn.cursor()
+        sql = """
+            SELECT r.username, z.municipio, cz.puntos_ganados, cz.fecha_hora, cz.tipo_captura
+            FROM captura_zona cz
+            JOIN runner r ON cz.id_runner = r.id_runner
+            JOIN zona z ON cz.id_zona = z.id_zona
+            WHERE cz.id_runner IN (
+                SELECT id_seguido FROM seguidor WHERE id_seguidor = %s
+            )
+            ORDER BY cz.fecha_hora DESC
+            LIMIT 20;
+        """
+        cur.execute(sql, (id_mi_usuario,))
+        feed = cur.fetchall()
+        cur.close(); conn.close()
+        
+        feed_list = []
+        for item in feed:
+            feed_list.append({
+                "usuario": item[0],
+                "accion": f"Conquistó una zona en {item[1]}",
+                "puntos": item[2],
+                "cuando": item[3],
+                "tipo": item[4]
+            })
+            
+        return {"feed": feed_list}
+        
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/notificaciones/{id_usuario}")
+def ver_notificaciones(id_usuario: int):
+    conn = get_db_connection()
+    if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
+    
+    try:
+        cur = conn.cursor()
+        # Seleccionamos las columnas que existen en tu imagen
+        sql = """
+            SELECT tipo, titulo, mensaje, fecha_hora, leida 
+            FROM notificacion 
+            WHERE id_runner = %s 
+            ORDER BY fecha_hora DESC
+        """
+        cur.execute(sql, (id_usuario,))
+        notis = cur.fetchall()
+        
+        # Marcar como leídas
+        cur.execute("UPDATE notificacion SET leida = TRUE WHERE id_runner = %s", (id_usuario,))
+        conn.commit()
+        
+        cur.close(); conn.close()
+        
+        lista = []
+        for n in notis:
+            lista.append({
+                "tipo": n[0],      # Columna 'tipo'
+                "titulo": n[1],    # Columna 'titulo'
+                "mensaje": n[2],   # Columna 'mensaje'
+                "fecha": n[3],     # Columna 'fecha_hora'
+                "nueva": not n[4]  # Columna 'leida' (si es False, es nueva)
+            })
+            
+        return {"tus_notificaciones": lista}
+        
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    # --- ENDPOINTS DE PERFIL SOCIAL (LISTAS) ---
+
+@app.get("/social/seguidores/{id_usuario}")
+def ver_quien_me_sigue(id_usuario: int):
+    """Devuelve la lista de personas que siguen al usuario"""
+    conn = get_db_connection()
+    if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
+    
+    try:
+        cur = conn.cursor()
+        # Buscamos en la tabla 'seguidor' donde yo soy el 'id_seguido'
+        # Hacemos JOIN con runner para saber sus nombres
+        sql = """
+            SELECT r.username, s.fecha_desde
+            FROM seguidor s
+            JOIN runner r ON s.id_seguidor = r.id_runner
+            WHERE s.id_seguido = %s;
+        """
+        cur.execute(sql, (id_usuario,))
+        resultados = cur.fetchall()
+        cur.close(); conn.close()
+        
+        lista = [{"usuario": r[0], "desde": r[1]} for r in resultados]
+        
+        return {
+            "total_seguidores": len(lista),
+            "lista": lista
+        }
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/social/siguiendo/{id_usuario}")
+def ver_a_quien_sigo(id_usuario: int):
+    """Devuelve la lista de personas a las que el usuario sigue"""
+    conn = get_db_connection()
+    if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
+    
+    try:
+        cur = conn.cursor()
+        # Buscamos donde yo soy el 'id_seguidor' (el que da el follow)
+        sql = """
+            SELECT r.username, s.fecha_desde
+            FROM seguidor s
+            JOIN runner r ON s.id_seguido = r.id_runner
+            WHERE s.id_seguidor = %s;
+        """
+        cur.execute(sql, (id_usuario,))
+        resultados = cur.fetchall()
+        cur.close(); conn.close()
+        
+        lista = [{"usuario": r[0], "desde": r[1]} for r in resultados]
+        
+        return {
+            "total_siguiendo": len(lista),
+            "lista": lista
+        }
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
