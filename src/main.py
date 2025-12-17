@@ -3,12 +3,15 @@ from pydantic import BaseModel
 from src.database import get_db_connection
 import bcrypt
 import datetime
+from src.routers import logros # Importamos el archivo entero
 
 app = FastAPI(
     title="RunnerApp API",
     description="Backend BattleRun - Lógica de Juego Activa ⚔️",
     version="2.2.0"
 )
+
+app.include_router(logros.router)
 
 # --- SEGURIDAD ---
 def encriptar_password(password: str):
@@ -139,25 +142,26 @@ def registrar_captura(datos: CapturaCreate):
         id_captura = cur.fetchone()[0]
         
         conn.commit()
+        hubo_premio = logros.verificar_y_otorgar_logros(datos.id_runner, conn)
+        
         cur.close()
         conn.close()
         
         # PASO 3: GENERAR EL MENSAJE DE BATALLA
         if nombre_anterior_dueno:
-            if nombre_anterior_dueno == "Tú mismo (Front lo chequeará)": 
+            if nombre_anterior_dueno == "Tú mismo (Front lo chequeará)":
                 # Lógica simplificada, aquí el front sabrá si es el mismo user por el ID
                 mensaje = f"Has reforzado tu dominio sobre esta zona."
             else:
                 mensaje = f"¡ATAQUE EXITOSO! ⚔️ Has arrebatado esta zona a {nombre_anterior_dueno}."
         else:
             mensaje = "¡NUEVO TERRITORIO! 🚩 Has reclamado una zona neutral."
+        if hubo_premio:
+            mensaje += " ¡Y has desbloqueado un NUEVO LOGRO! 🏅"
 
-        return {
-            "mensaje": mensaje,
-            "dueño_anterior": nombre_anterior_dueno,
-            "puntos": datos.puntos_ganados,
-            "fecha": ahora
-        }
+    return {"mensaje": mensaje, "puntos_ganados": datos.puntos_ganados, "id_captura": id_captura}
+
+
         
     except Exception as e:
         if conn: conn.rollback()
@@ -597,6 +601,34 @@ def info_zona_detalle(id_zona: int):
         else:
             return {"estado": "LIBRE", "mensaje": "Esta zona es neutral. ¡Corre a por ella!"}
             
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.get("/logros")
+def listar_logros_disponibles():
+    """Muestra todas las medallas disponibles con sus iconos y categorías"""
+    conn = get_db_connection()
+    if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
+    
+    try:
+        cur = conn.cursor()
+        # Seleccionamos las columnas que SI existen en tu foto
+        cur.execute("SELECT id_logro, nombre, descripcion, icono, categoria FROM logro")
+        logros = cur.fetchall()
+        cur.close(); conn.close()
+        
+        lista = []
+        for l in logros:
+            lista.append({
+                "id": l[0], 
+                "titulo": l[1], 
+                "descripcion": l[2], 
+                "icono": l[3],       # Nuevo campo
+                "categoria": l[4]    # Nuevo campo
+            })
+            
+        return lista
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=500, detail=str(e))
