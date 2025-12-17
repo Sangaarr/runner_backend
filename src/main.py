@@ -114,14 +114,13 @@ def registrar_captura(datos: CapturaCreate):
     try:
         cur = conn.cursor()
         
-        # PASO 1: INVESTIGAR EL PASADO (¿De quién es esta zona ahora mismo?)
-        # Buscamos la última captura de esta zona y hacemos un JOIN para saber el nombre del dueño
+        # PASO 1: INVESTIGAR EL PASADO
         sql_investigacion = """
             SELECT r.username 
             FROM captura_zona cz
             JOIN runner r ON cz.id_runner = r.id_runner
             WHERE cz.id_zona = %s
-            ORDER BY cz.fecha_hora DESC
+            ORDER BY cz.fecha_hora DESC 
             LIMIT 1;
         """
         cur.execute(sql_investigacion, (datos.id_zona,))
@@ -137,10 +136,12 @@ def registrar_captura(datos: CapturaCreate):
             VALUES (%s, %s, %s, %s, %s)
             RETURNING id_captura;
         """
+        
         ahora = datetime.datetime.now()
         cur.execute(sql_insertar, (datos.id_runner, datos.id_zona, ahora, datos.tipo_captura, datos.puntos_ganados))
         id_captura = cur.fetchone()[0]
         
+        # Guardamos cambios y calculamos logros
         conn.commit()
         hubo_premio = logros.verificar_y_otorgar_logros(datos.id_runner, conn)
         
@@ -150,19 +151,17 @@ def registrar_captura(datos: CapturaCreate):
         # PASO 3: GENERAR EL MENSAJE DE BATALLA
         if nombre_anterior_dueno:
             if nombre_anterior_dueno == "Tú mismo (Front lo chequeará)":
-                # Lógica simplificada, aquí el front sabrá si es el mismo user por el ID
-                mensaje = f"Has reforzado tu dominio sobre esta zona."
+                mensaje = "Has reforzado tu dominio sobre esta zona."
             else:
                 mensaje = f"¡ATAQUE EXITOSO! ⚔️ Has arrebatado esta zona a {nombre_anterior_dueno}."
         else:
             mensaje = "¡NUEVO TERRITORIO! 🚩 Has reclamado una zona neutral."
+
         if hubo_premio:
             mensaje += " ¡Y has desbloqueado un NUEVO LOGRO! 🏅"
+            
+        return {"mensaje": mensaje, "puntos_ganados": datos.puntos_ganados, "id_captura": id_captura}
 
-    return {"mensaje": mensaje, "puntos_ganados": datos.puntos_ganados, "id_captura": id_captura}
-
-
-        
     except Exception as e:
         if conn: conn.rollback()
         raise HTTPException(status_code=400, detail=str(e))
