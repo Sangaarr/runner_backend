@@ -520,3 +520,83 @@ def ver_a_quien_sigo(id_usuario: int):
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=500, detail=str(e))
+    
+    # --- ENDPOINTS DE MAPA Y ESTADO DE ZONAS ---
+
+@app.get("/zonas/mapa/estado")
+def obtener_estado_mapa():
+    """
+    Devuelve la lista de TODAS las zonas y quién es el dueño actual.
+    Ideal para pintar el mapa de colores en la App.
+    """
+    conn = get_db_connection()
+    if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
+    
+    try:
+        cur = conn.cursor()
+        
+        # Truco PRO de SQL (DISTINCT ON):
+        # Seleccionamos cada zona (z.id_zona) y la ordenamos por fecha DESC.
+        # Postgres se queda solo con la primera fila de cada grupo (la captura más reciente).
+        # Usamos LEFT JOIN para que también salgan las zonas que NADIE ha capturado todavía (saldrán con NULL).
+        
+        sql = """
+            SELECT DISTINCT ON (z.id_zona)
+                z.id_zona,
+                z.municipio, 
+                r.username, 
+                cz.fecha_hora
+            FROM zona z
+            LEFT JOIN captura_zona cz ON z.id_zona = cz.id_zona
+            LEFT JOIN runner r ON cz.id_runner = r.id_runner
+            ORDER BY z.id_zona, cz.fecha_hora DESC;
+        """
+        
+        cur.execute(sql)
+        zonas = cur.fetchall()
+        cur.close(); conn.close()
+        
+        lista_mapa = []
+        for z in zonas:
+            dueno = z[2] if z[2] else "ZONA NEUTRAL" # Si es None, es neutral
+            lista_mapa.append({
+                "id_zona": z[0],
+                "municipio": z[1],
+                "propietario": dueno,
+                "conquistada_el": z[3]
+            })
+            
+        return {"total_zonas": len(lista_mapa), "mapa": lista_mapa}
+        
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/zonas/{id_zona}/info")
+def info_zona_detalle(id_zona: int):
+    """Devuelve el dueño actual de UNA zona específica"""
+    conn = get_db_connection()
+    if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
+    
+    try:
+        cur = conn.cursor()
+        sql = """
+            SELECT r.username, cz.fecha_hora
+            FROM captura_zona cz
+            JOIN runner r ON cz.id_runner = r.id_runner
+            WHERE cz.id_zona = %s
+            ORDER BY cz.fecha_hora DESC
+            LIMIT 1;
+        """
+        cur.execute(sql, (id_zona,))
+        resultado = cur.fetchone()
+        cur.close(); conn.close()
+        
+        if resultado:
+            return {"estado": "OCUPADA", "propietario": resultado[0], "fecha": resultado[1]}
+        else:
+            return {"estado": "LIBRE", "mensaje": "Esta zona es neutral. ¡Corre a por ella!"}
+            
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
