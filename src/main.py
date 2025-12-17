@@ -605,30 +605,3 @@ def info_zona_detalle(id_zona: int):
         conn.close()
         raise HTTPException(status_code=500, detail=str(e))
     
-    @app.get("/logros")
-def listar_logros_disponibles():
-    """Muestra todas las medallas disponibles con sus iconos y categorías"""
-    conn = get_db_connection()
-    if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
-    
-    try:
-        cur = conn.cursor()
-        # Seleccionamos las columnas que SI existen en tu foto
-        cur.execute("SELECT id_logro, nombre, descripcion, icono, categoria FROM logro")
-        logros = cur.fetchall()
-        cur.close(); conn.close()
-        
-        lista = []
-        for l in logros:
-            lista.append({
-                "id": l[0], 
-                "titulo": l[1], 
-                "descripcion": l[2], 
-                "icono": l[3],       # Nuevo campo
-                "categoria": l[4]    # Nuevo campo
-            })
-            
-        return lista
-    except Exception as e:
-        conn.close()
-        raise HTTPException(status_code=500, detail=str(e))
