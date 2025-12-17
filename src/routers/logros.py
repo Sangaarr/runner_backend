@@ -23,9 +23,9 @@ def verificar_y_otorgar_logros(id_runner: int, conn):
         # 2. Definimos las reglas (ID del logro : Capturas necesarias)
         # ID 1 = Primeros Pasos, ID 2 = Conquistador, ID 3 = Rey de la Colina
         reglas = {
-            1: 1,   
-            2: 5,   
-            3: 10   
+            1: 1,
+            2: 5,
+            3: 10
         }
         
         nuevos_logros = []
@@ -38,7 +38,7 @@ def verificar_y_otorgar_logros(id_runner: int, conn):
                 cur.execute("SELECT * FROM runner_logro WHERE id_runner = %s AND id_logro = %s", (id_runner, id_logro))
                 if not cur.fetchone():
                     # No lo tiene, SE LO DAMOS
-                    cur.execute("INSERT INTO runner_logro (id_runner, id_logro, fecha_obtencion) VALUES (%s, %s, NOW())", (id_runner, id_logro))
+                    cur.execute("INSERT INTO runner_logro (id_runner, id_logro, fecha_obtenido) VALUES (%s, %s, NOW())", (id_runner, id_logro))
                     
                     # (Opcional) Creamos notificación
                     cur.execute("""
@@ -97,11 +97,11 @@ def ver_mis_logros(id_runner: int):
         cur = conn.cursor()
         # JOIN para sacar los detalles del logro desde la tabla intermedia
         sql = """
-            SELECT l.nombre, l.descripcion, l.icono, rl.fecha_obtencion 
+            SELECT l.nombre, l.descripcion, l.icono, rl.fecha_obtenido 
             FROM runner_logro rl
             JOIN logro l ON rl.id_logro = l.id_logro
             WHERE rl.id_runner = %s
-            ORDER BY rl.fecha_obtencion DESC
+            ORDER BY rl.fecha_obtenido DESC
         """
         cur.execute(sql, (id_runner,))
         mis_logros = cur.fetchall()
