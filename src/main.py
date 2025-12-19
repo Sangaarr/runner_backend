@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from src.routers import auth, logros, mapas, ranking, capturas, social
+from src.routers import auth, logros, mapas, ranking, capturas, social, usuario
 
 app = FastAPI(
     title="RunnerApp API",
@@ -14,6 +14,7 @@ app.include_router(capturas.router)   # Batallas y Capturas
 app.include_router(logros.router)     # Medallas
 app.include_router(ranking.router)    # Clasificaciones
 app.include_router(social.router)     # Equipos, Amigos y Notificaciones
+app.include_router(usuario.router)    # Usuario
 
 # --- ENDPOINT DE SALUD ---
 @app.get("/")
