@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from src.routers import auth, logros, mapas, temporadas, ranking, capturas, social
+from src.routers import auth, logros, mapas, ranking, capturas, social
 
 app = FastAPI(
     title="RunnerApp API",
