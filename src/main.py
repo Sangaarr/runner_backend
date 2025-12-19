@@ -14,7 +14,6 @@ app.include_router(capturas.router)   # Batallas y Capturas
 app.include_router(logros.router)     # Medallas
 app.include_router(ranking.router)    # Clasificaciones
 app.include_router(social.router)     # Equipos, Amigos y Notificaciones
-app.include_router(temporadas.router) # (Futuro)
 
 # --- ENDPOINT DE SALUD ---
 @app.get("/")
