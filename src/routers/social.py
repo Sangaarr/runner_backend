@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from src.database import get_db_connection
+from src.dependencies import obtener_runner_actual # <--- IMPORT SEGURIDAD
 import datetime
 
 router = APIRouter()
@@ -12,16 +13,18 @@ class EquipoCreate(BaseModel):
     ciudad_base: str
 
 class UnirseEquipoRequest(BaseModel):
-    id_runner: int
+    # id_runner: int <--- ELIMINADO
     id_equipo: int
 
 class SeguirRequest(BaseModel):
-    id_seguidor: int
-    id_seguido: int
+    # id_seguidor: int <--- ELIMINADO (El seguidor soy YO, el logueado)
+    id_seguido: int    # (A quién quiero seguir)
 
 # --- ENDPOINTS EQUIPOS ---
 @router.post("/equipos")
 def crear_equipo(equipo: EquipoCreate):
+    # OJO: Aquí también podríamos protegerlo para saber quién es el fundador/admin.
+    # De momento lo dejo abierto, pero idealmente debería llevar token.
     conn = get_db_connection()
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
     try:
@@ -37,13 +40,17 @@ def crear_equipo(equipo: EquipoCreate):
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/equipos/unirse")
-def unirse_equipo(datos: UnirseEquipoRequest):
+def unirse_equipo(
+    datos: UnirseEquipoRequest,
+    id_runner_autenticado: int = Depends(obtener_runner_actual) # <--- CANDADO
+):
     conn = get_db_connection()
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
     try:
         cur = conn.cursor()
         sql = "INSERT INTO runner_equipo (id_runner, id_equipo, rol, fecha_union) VALUES (%s, %s, 'Miembro', NOW()) RETURNING fecha_union;"
-        cur.execute(sql, (datos.id_runner, datos.id_equipo))
+        # Usamos id_runner_autenticado
+        cur.execute(sql, (id_runner_autenticado, datos.id_equipo))
         conn.commit()
         cur.close(); conn.close()
         return {"mensaje": "¡Te has unido al equipo! 🤝", "equipo_id": datos.id_equipo}
@@ -53,6 +60,7 @@ def unirse_equipo(datos: UnirseEquipoRequest):
 
 @router.get("/equipos/{id_equipo}/miembros")
 def ver_miembros_equipo(id_equipo: int):
+    # PÚBLICO
     conn = get_db_connection()
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
     try:
@@ -72,13 +80,19 @@ def ver_miembros_equipo(id_equipo: int):
 
 # --- ENDPOINTS SOCIALES ---
 @router.post("/social/seguir")
-def seguir_usuario(datos: SeguirRequest):
-    if datos.id_seguidor == datos.id_seguido: raise HTTPException(status_code=400, detail="No puedes seguirte a ti mismo")
+def seguir_usuario(
+    datos: SeguirRequest,
+    id_runner_autenticado: int = Depends(obtener_runner_actual) # <--- CANDADO
+):
+    if id_runner_autenticado == datos.id_seguido: 
+        raise HTTPException(status_code=400, detail="No puedes seguirte a ti mismo")
+    
     conn = get_db_connection()
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
     try:
         cur = conn.cursor()
-        cur.execute("INSERT INTO seguidor (id_seguidor, id_seguido, fecha_desde) VALUES (%s, %s, NOW())", (datos.id_seguidor, datos.id_seguido))
+        # id_seguidor es el token, id_seguido es el JSON
+        cur.execute("INSERT INTO seguidor (id_seguidor, id_seguido, fecha_desde) VALUES (%s, %s, NOW())", (id_runner_autenticado, datos.id_seguido))
         cur.execute("INSERT INTO notificacion (id_runner, tipo, titulo, mensaje, leida, fecha_hora) VALUES (%s, 'SOCIAL', 'Nuevo Seguidor', '¡Alguien te sigue!', FALSE, NOW())", (datos.id_seguido,))
         conn.commit()
         cur.close(); conn.close()
@@ -89,6 +103,7 @@ def seguir_usuario(datos: SeguirRequest):
 
 @router.get("/social/feed/{id_mi_usuario}")
 def obtener_feed_amigos(id_mi_usuario: int):
+    # PÚBLICO (o podrías protegerlo también si quieres que sea TU feed)
     conn = get_db_connection()
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
     try:
@@ -110,14 +125,22 @@ def obtener_feed_amigos(id_mi_usuario: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/notificaciones/{id_usuario}")
-def ver_notificaciones(id_usuario: int):
+def ver_notificaciones(
+    id_usuario: int,
+    # OJO: Este es muy sensible, mejor protegerlo para que nadie lea mis mensajes.
+    # Como el endpoint pide {id_usuario} en la URL, podríamos comparar:
+    id_runner_autenticado: int = Depends(obtener_runner_actual)
+):
+    if id_usuario != id_runner_autenticado:
+        raise HTTPException(status_code=403, detail="No puedes leer notificaciones ajenas")
+
     conn = get_db_connection()
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
     try:
         cur = conn.cursor()
-        cur.execute("SELECT tipo, titulo, mensaje, fecha_hora, leida FROM notificacion WHERE id_runner = %s ORDER BY fecha_hora DESC", (id_usuario,))
+        cur.execute("SELECT tipo, titulo, mensaje, fecha_hora, leida FROM notificacion WHERE id_runner = %s ORDER BY fecha_hora DESC", (id_runner_autenticado,))
         notis = [{"tipo":n[0], "titulo":n[1], "mensaje":n[2], "fecha":n[3], "nueva":not n[4]} for n in cur.fetchall()]
-        cur.execute("UPDATE notificacion SET leida = TRUE WHERE id_runner = %s", (id_usuario,))
+        cur.execute("UPDATE notificacion SET leida = TRUE WHERE id_runner = %s", (id_runner_autenticado,))
         conn.commit()
         cur.close(); conn.close()
         return {"tus_notificaciones": notis}

@@ -1,19 +1,23 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from src.database import get_db_connection
 from src.routers import logros
+from src.dependencies import obtener_runner_actual
 import datetime
 
 router = APIRouter()
 
 class CapturaCreate(BaseModel):
-    id_runner: int
+    # id_runner: int  <--- ¡YA NO LO PEDIMOS EN EL JSON! (Seguridad)
     id_zona: int
     tipo_captura: str = "NORMAL"
     puntos_ganados: int = 10
 
 @router.post("/capturas")
-def registrar_captura(datos: CapturaCreate):
+def registrar_captura(
+    datos: CapturaCreate, 
+    id_runner_autenticado: int = Depends(obtener_runner_actual) # <--- AQUÍ OBTENEMOS EL ID DEL TOKEN
+):
     conn = get_db_connection()
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
     
@@ -31,18 +35,20 @@ def registrar_captura(datos: CapturaCreate):
         nombre_anterior_dueno = resultado_anterior[0] if resultado_anterior else None
             
         # 2. Registrar captura
+        # ⚠️ IMPORTANTE: Usamos 'id_runner_autenticado' en lugar de 'datos.id_runner'
         sql_insertar = """
             INSERT INTO captura_zona (id_runner, id_zona, fecha_hora, tipo_captura, puntos_ganados)
             VALUES (%s, %s, %s, %s, %s) RETURNING id_captura;
         """
         ahora = datetime.datetime.now()
-        cur.execute(sql_insertar, (datos.id_runner, datos.id_zona, ahora, datos.tipo_captura, datos.puntos_ganados))
+        cur.execute(sql_insertar, (id_runner_autenticado, datos.id_zona, ahora, datos.tipo_captura, datos.puntos_ganados))
         id_captura = cur.fetchone()[0]
         
         conn.commit()
         
         # 3. Verificar Logros
-        hubo_premio = logros.verificar_y_otorgar_logros(datos.id_runner, conn)
+        # ⚠️ IMPORTANTE: También aquí pasamos el ID autenticado
+        hubo_premio = logros.verificar_y_otorgar_logros(id_runner_autenticado, conn)
         
         cur.close(); conn.close()
         

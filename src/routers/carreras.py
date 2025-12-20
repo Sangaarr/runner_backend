@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List
 from src.database import get_db_connection
+from src.dependencies import obtener_runner_actual # <--- IMPORT SEGURIDAD
 import datetime
 
 router = APIRouter()
@@ -14,15 +15,18 @@ class PuntoGPS(BaseModel):
     timestamp: datetime.datetime
 
 class CarreraCreate(BaseModel):
-    id_runner: int
+    # id_runner: int  <--- ELIMINADO (Lo sacamos del Token)
     distancia_km: float
-    tiempo_segundos: int  # Duración total
-    ritmo_min_km: float   # Ritmo medio
-    puntos: List[PuntoGPS] # Array con todas las coordenadas
+    tiempo_segundos: int
+    ritmo_min_km: float
+    puntos: List[PuntoGPS]
 
 # --- ENDPOINT ---
 @router.post("/carreras/guardar")
-def guardar_carrera(carrera: CarreraCreate):
+def guardar_carrera(
+    carrera: CarreraCreate,
+    id_runner_autenticado: int = Depends(obtener_runner_actual) # <--- CANDADO
+):
     """Guarda una ruta finalizada y sus puntos GPS"""
     conn = get_db_connection()
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
@@ -30,22 +34,16 @@ def guardar_carrera(carrera: CarreraCreate):
     try:
         cur = conn.cursor()
         
-        # 1. Guardar la Cabecera (Tabla 'ruta')
-        # Asumo que tu tabla se llama 'ruta' viendo tus fotos anteriores
+        # 1. Guardar la Cabecera (Usamos id_runner_autenticado)
         sql_ruta = """
             INSERT INTO ruta (id_runner, fecha_inicio, distancia_km, tiempo_total) 
             VALUES (%s, NOW(), %s, %s) 
             RETURNING id_ruta;
         """
-        # Nota: tiempo_total lo guardamos tal cual, o lo convertimos a intervalo según tu DB. 
-        # Si tu DB usa INT para segundos, perfecto. Si usa INTERVAL, avísame.
-        # Aquí asumo que guardas algo simple o texto/int.
-        
-        cur.execute(sql_ruta, (carrera.id_runner, carrera.distancia_km, carrera.tiempo_segundos))
+        cur.execute(sql_ruta, (id_runner_autenticado, carrera.distancia_km, carrera.tiempo_segundos))
         id_ruta = cur.fetchone()[0]
         
-        # 2. Guardar los Puntos (Tabla 'track_point')
-        # Hacemos un bucle (o un executemany para ser más pro y rápido)
+        # 2. Guardar los Puntos
         sql_puntos = """
             INSERT INTO track_point (id_ruta, latitud, longitud, orden, fecha_hora)
             VALUES (%s, %s, %s, %s, %s)
@@ -69,7 +67,8 @@ def guardar_carrera(carrera: CarreraCreate):
 
 @router.get("/carreras/historial/{id_runner}")
 def ver_mis_carreras(id_runner: int):
-    """Lista las carreras pasadas del usuario"""
+    # ESTE LO DEJAMOS PÚBLICO (Opcional) para poder ver perfiles de amigos.
+    # Si quieres que sea privado, cambia id_runner por el token también.
     conn = get_db_connection()
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
     
@@ -91,7 +90,7 @@ def ver_mis_carreras(id_runner: int):
                 "id_ruta": f[0],
                 "fecha": f[1],
                 "distancia": f"{f[2]} km",
-                "duracion": f"{f[3]} seg" # El front lo formateará bonito (ej: 25:00)
+                "duracion": f"{f[3]} seg"
             })
             
         return {"historial": lista}

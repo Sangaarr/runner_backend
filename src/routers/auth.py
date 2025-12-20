@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from src.database import get_db_connection
+from src.dependencies import crear_token_acceso
 import bcrypt
 import datetime
 import random
@@ -49,6 +50,7 @@ def registrar_usuario(nuevo_usuario: RunnerCreate):
 def login(datos_login: LoginRequest):
     conn = get_db_connection()
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
+    
     try:
         cur = conn.cursor()
         cur.execute("SELECT id_runner, username, password_hash FROM runner WHERE email = %s", (datos_login.email,))
@@ -58,10 +60,19 @@ def login(datos_login: LoginRequest):
         if not user or not verificar_password(datos_login.password, user[2]):
             raise HTTPException(status_code=401, detail="Credenciales incorrectas")
         
-        return {"mensaje": "Login OK", "usuario": {"id": user[0], "nombre": user[1]}}
+        # En lugar de solo devolver el ID, generamos el token
+        id_runner = user[0]
+        access_token = crear_token_acceso(data={"sub": id_runner, "name": user[1]})
+        
+        return {
+            "mensaje": "Login exitoso",
+            "access_token": access_token, 
+            "token_type": "bearer",
+            "usuario": {"id": id_runner, "nombre": user[1]}
+        }
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
 
 # MODELOS
 

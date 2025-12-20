@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends # <--- Importamos Depends
 from pydantic import BaseModel
 from src.database import get_db_connection
+from src.dependencies import obtener_runner_actual # <--- Importamos seguridad
 
 router = APIRouter()
 
@@ -12,8 +13,14 @@ class ZonaCreate(BaseModel):
     provincia: str
     municipio: str
 
+# --- PROTEGEMOS LA CREACIÓN DE ZONAS ---
 @router.post("/zonas")
-def crear_zona(nueva_zona: ZonaCreate):
+def crear_zona(
+    nueva_zona: ZonaCreate,
+    # Al pedir el token, nos aseguramos de que al menos es un usuario registrado.
+    # (En el futuro, aquí verificaríamos si id_runner_autenticado es ADMIN)
+    id_runner_autenticado: int = Depends(obtener_runner_actual) 
+):
     conn = get_db_connection()
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
     try:
@@ -28,9 +35,11 @@ def crear_zona(nueva_zona: ZonaCreate):
         if conn: conn.rollback()
         raise HTTPException(status_code=400, detail=str(e))
 
+# --- LOS GET LOS DEJAMOS PÚBLICOS ---
 @router.get("/zonas/mapa/estado")
 def obtener_estado_mapa():
     conn = get_db_connection()
+    # ... (El resto del código de lectura se queda igual, sin Depends) ...
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
     try:
         cur = conn.cursor()
@@ -57,6 +66,7 @@ def obtener_estado_mapa():
 @router.get("/zonas/{id_zona}/info")
 def info_zona_detalle(id_zona: int):
     conn = get_db_connection()
+    # ... (Este también público) ...
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
     try:
         cur = conn.cursor()
