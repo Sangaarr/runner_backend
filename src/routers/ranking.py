@@ -175,3 +175,52 @@ def ranking_equipos():
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+@router.get("/ranking/equipos/temporada")
+def ranking_equipos_temporada():
+    """Top Equipos SOLO sumando los puntos conseguidos en la TEMPORADA ACTUAL"""
+    conn = get_db_connection()
+    if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
+    
+    try:
+        cur = conn.cursor()
+        
+        # 1. Sacamos fechas de la temporada actual
+        ahora = datetime.datetime.now()
+        cur.execute("SELECT fecha_inicio, fecha_fin, nombre FROM temporada WHERE %s BETWEEN fecha_inicio AND fecha_fin LIMIT 1", (ahora,))
+        temp = cur.fetchone()
+        
+        if not temp:
+            return {"mensaje": "No hay temporada activa, no hay ranking de equipos estacional."}
+            
+        inicio, fin, nombre_temp = temp
+        
+        # 2. SQL Mágico: Equipos + Miembros + Capturas (Filtradas por fecha)
+        sql = """
+            SELECT e.nombre, SUM(cz.puntos_ganados) as total_equipo
+            FROM equipo e
+            JOIN runner_equipo re ON e.id_equipo = re.id_equipo
+            JOIN captura_zona cz ON re.id_runner = cz.id_runner
+            WHERE cz.fecha_hora BETWEEN %s AND %s  -- <--- AQUÍ ESTÁ LA CLAVE
+            GROUP BY e.nombre
+            ORDER BY total_equipo DESC
+            LIMIT 10;
+        """
+        cur.execute(sql, (inicio, fin))
+        resultados = cur.fetchall()
+        cur.close(); conn.close()
+        
+        lista = []
+        for i, r in enumerate(resultados):
+            pts = r[1] if r[1] else 0
+            lista.append({"pos": i+1, "equipo": r[0], "pts": pts})
+            
+        return {
+            "titulo": f"🛡️ CLANES LÍDERES - {nombre_temp.upper()}", 
+            "ranking": lista
+        }
+        
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
