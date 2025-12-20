@@ -19,7 +19,7 @@ def crear_token_acceso(data: dict):
 
 def obtener_runner_actual(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """
-    Valida el token y devuelve el ID del usuario.
+    Valida el token y devuelve el ID del usuario como un entero.
     """
     token = credentials.credentials
     
@@ -29,13 +29,23 @@ def obtener_runner_actual(credentials: HTTPAuthorizationCredentials = Depends(se
     try:
         # Intentamos decodificar
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        id_runner: int = payload.get("sub")
         
-        if id_runner is None:
+        # 1. Obtenemos el dato "sub" (que vendrá como texto/string)
+        sub_texto = payload.get("sub")
+        
+        if sub_texto is None:
             raise HTTPException(status_code=401, detail="Token válido pero falta el ID (sub)")
             
+        # 2. Convertimos ese texto a número entero para la base de datos
+        # CORRECCIÓN AQUÍ: Usamos la variable 'sub_texto' que acabamos de leer
+        id_runner = int(sub_texto)
+        
         return id_runner
 
+    except ValueError:
+        # Esto salta si el token trae letras en vez de números en el ID
+        raise HTTPException(status_code=401, detail="El ID en el token no es un número válido")
+        
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="El token ha caducado (Expired)")
         

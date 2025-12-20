@@ -62,7 +62,7 @@ def login(datos_login: LoginRequest):
         
         # En lugar de solo devolver el ID, generamos el token
         id_runner = user[0]
-        access_token = crear_token_acceso(data={"sub": id_runner, "name": user[1]})
+        access_token = crear_token_acceso(data={"sub"str: id_runner, "name": user[1]})
         
         return {
             "mensaje": "Login exitoso",
