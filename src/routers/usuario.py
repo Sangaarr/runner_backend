@@ -4,15 +4,13 @@ from src.database import get_db_connection
 
 router = APIRouter()
 
-# --- MODELO ADAPTADO A TU BASE DE DATOS REAL ---
+
 class PreferenciasUpdate(BaseModel):
     id_runner: int
-    # Tus columnas existentes
     perfil_publico: bool
     rutas_publicas: bool
     mostrar_en_rankings: bool
     acepta_solicitudes_seguidor: bool
-    # Las nuevas columnas añadidas
     mostrar_ubicacion: bool
     recibir_notificaciones: bool
 
