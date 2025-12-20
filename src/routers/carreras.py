@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List
 from src.database import get_db_connection
-from src.dependencies import obtener_runner_actual # <--- IMPORT SEGURIDAD
+from src.dependencies import obtener_runner_actual
 import datetime
 
 router = APIRouter()
@@ -15,7 +15,7 @@ class PuntoGPS(BaseModel):
     timestamp: datetime.datetime
 
 class CarreraCreate(BaseModel):
-    # id_runner: int  <--- ELIMINADO (Lo sacamos del Token)
+    # id_runner eliminado (viene del token)
     distancia_km: float
     tiempo_segundos: int
     ritmo_min_km: float
@@ -25,16 +25,39 @@ class CarreraCreate(BaseModel):
 @router.post("/carreras/guardar")
 def guardar_carrera(
     carrera: CarreraCreate,
-    id_runner_autenticado: int = Depends(obtener_runner_actual) # <--- CANDADO
+    id_runner_autenticado: int = Depends(obtener_runner_actual)
 ):
-    """Guarda una ruta finalizada y sus puntos GPS"""
+    """Guarda una ruta finalizada y sus puntos GPS (Con Anti-Cheat básico)"""
+    
+    # --- 🚨 BLOQUE ANTI-CHEAT 🚨 ---
+    
+    # 1. Evitar división por cero
+    if carrera.tiempo_segundos <= 0:
+        raise HTTPException(status_code=400, detail="El tiempo de carrera no puede ser 0.")
+
+    # 2. Calcular velocidad media en km/h
+    # (Distancia km / Tiempo segundos) * 3600 segundos/hora
+    velocidad_media_kmh = (carrera.distancia_km / carrera.tiempo_segundos) * 3600
+    
+    # 3. Límite Humano (30 km/h es muy generoso, el récord de maratón es ~21 km/h)
+    LIMITE_VELOCIDAD = 30.0 
+    
+    if velocidad_media_kmh > LIMITE_VELOCIDAD:
+        print(f"⚠️ ALERTA CHEATER: Usuario {id_runner_autenticado} intentó subir carrera a {velocidad_media_kmh:.2f} km/h")
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Carrera rechazada: Velocidad media ({velocidad_media_kmh:.1f} km/h) sospechosa de vehículo."
+        )
+    
+    # ---------------------------------
+
     conn = get_db_connection()
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
     
     try:
         cur = conn.cursor()
         
-        # 1. Guardar la Cabecera (Usamos id_runner_autenticado)
+        # 1. Guardar la Cabecera
         sql_ruta = """
             INSERT INTO ruta (id_runner, fecha_inicio, distancia_km, tiempo_total) 
             VALUES (%s, NOW(), %s, %s) 
@@ -59,7 +82,7 @@ def guardar_carrera(
         conn.commit()
         cur.close(); conn.close()
         
-        return {"mensaje": "Carrera guardada con éxito 🏁", "id_ruta": id_ruta}
+        return {"mensaje": "Carrera guardada con éxito 🏁", "id_ruta": id_ruta, "velocidad_registrada": f"{velocidad_media_kmh:.1f} km/h"}
 
     except Exception as e:
         if conn: conn.rollback()
@@ -67,8 +90,7 @@ def guardar_carrera(
 
 @router.get("/carreras/historial/{id_runner}")
 def ver_mis_carreras(id_runner: int):
-    # ESTE LO DEJAMOS PÚBLICO (Opcional) para poder ver perfiles de amigos.
-    # Si quieres que sea privado, cambia id_runner por el token también.
+    # Endpoint público para ver perfiles (sin cambios)
     conn = get_db_connection()
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
     
