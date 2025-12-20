@@ -4,10 +4,10 @@ import jwt
 import datetime
 
 # --- CONFIGURACIÓN DE SEGURIDAD ---
+# ASEGÚRATE DE QUE ESTA CLAVE SEA EXACTAMENTE LA MISMA QUE USAS AL CREAR EL TOKEN
 SECRET_KEY = "super_secreto_clave_maestra_battlerun" 
 ALGORITHM = "HS256"
 
-# CAMBIO CLAVE: Usamos HTTPBearer para que Swagger nos deje pegar el token manualmente
 security = HTTPBearer()
 
 def crear_token_acceso(data: dict):
@@ -20,17 +20,28 @@ def crear_token_acceso(data: dict):
 def obtener_runner_actual(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """
     Valida el token y devuelve el ID del usuario.
-    Ahora extraemos el token del objeto 'credentials'.
     """
-    token = credentials.credentials  # <--- Aquí sacamos el string del token
+    token = credentials.credentials
+    
+    # --- DEBUG: IMPRIMIMOS LO QUE LLEGA ---
+    print(f"\n🔍 DEBUG - Token recibido: '{token}'") 
     
     try:
+        # Intentamos decodificar
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         id_runner: int = payload.get("sub")
+        
         if id_runner is None:
-            raise HTTPException(status_code=401, detail="Token inválido: falta ID")
+            raise HTTPException(status_code=401, detail="Token válido pero falta el ID (sub)")
+            
         return id_runner
+
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="El token ha caducado, haz login de nuevo")
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Token inválido")
+        raise HTTPException(status_code=401, detail="El token ha caducado (Expired)")
+        
+    except jwt.PyJWTError as e:
+        # --- DEBUG: IMPRIMIMOS EL ERROR REAL ---
+        print(f"❌ DEBUG - Error JWT: {str(e)}")
+        
+        # Le devolvemos el error técnico a Swagger para que lo leas
+        raise HTTPException(status_code=401, detail=f"Token inválido (Error técnico: {str(e)})")
