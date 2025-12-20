@@ -4,14 +4,13 @@ import jwt
 import datetime
 
 # --- CONFIGURACIÓN DE SEGURIDAD ---
-# ASEGÚRATE DE QUE ESTA CLAVE SEA EXACTAMENTE LA MISMA QUE USAS AL CREAR EL TOKEN
 SECRET_KEY = "super_secreto_clave_maestra_battlerun" 
 ALGORITHM = "HS256"
 
 security = HTTPBearer()
 
 def crear_token_acceso(data: dict):
-    """Crea un token que caduca en 7 días"""
+    """Crea un token JWT que caduca en 7 días."""
     to_encode = data.copy()
     expiracion = datetime.datetime.utcnow() + datetime.timedelta(days=7)
     to_encode.update({"exp": expiracion})
@@ -19,39 +18,24 @@ def crear_token_acceso(data: dict):
 
 def obtener_runner_actual(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """
-    Valida el token y devuelve el ID del usuario como un entero.
+    Valida el token Bearer y devuelve el ID del usuario.
+    Si el token es inválido o ha expirado, lanza una excepción 401.
     """
     token = credentials.credentials
     
-    # --- DEBUG: IMPRIMIMOS LO QUE LLEGA ---
-    print(f"\n🔍 DEBUG - Token recibido: '{token}'") 
-    
     try:
-        # Intentamos decodificar
+        # Decodificamos el token
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         
-        # 1. Obtenemos el dato "sub" (que vendrá como texto/string)
+        # Recuperamos el ID (viene como string, lo pasamos a int)
         sub_texto = payload.get("sub")
-        
         if sub_texto is None:
-            raise HTTPException(status_code=401, detail="Token válido pero falta el ID (sub)")
+            raise HTTPException(status_code=401, detail="Token inválido")
             
-        # 2. Convertimos ese texto a número entero para la base de datos
-        # CORRECCIÓN AQUÍ: Usamos la variable 'sub_texto' que acabamos de leer
-        id_runner = int(sub_texto)
-        
-        return id_runner
+        return int(sub_texto)
 
-    except ValueError:
-        # Esto salta si el token trae letras en vez de números en el ID
-        raise HTTPException(status_code=401, detail="El ID en el token no es un número válido")
-        
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="El token ha caducado (Expired)")
-        
-    except jwt.PyJWTError as e:
-        # --- DEBUG: IMPRIMIMOS EL ERROR REAL ---
-        print(f"❌ DEBUG - Error JWT: {str(e)}")
-        
-        # Le devolvemos el error técnico a Swagger para que lo leas
-        raise HTTPException(status_code=401, detail=f"Token inválido (Error técnico: {str(e)})")
+        raise HTTPException(status_code=401, detail="El token ha caducado")
+    except (jwt.PyJWTError, ValueError):
+        # Capturamos cualquier otro error (firma mala, formato incorrecto, etc.)
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
