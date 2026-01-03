@@ -26,13 +26,14 @@ class CarreraCreate(BaseModel):
 
 # --- LÓGICA DE CÁLCULO DE TERRITORIO (H3) ---
 def calcular_hexagonos_conquistados(puntos: List[PuntoGPS]) -> set:
-    hexagonos_conquistados = set()
+    hexagonos_strings = set() # Guardamos primero los strings que da la librería
     
     if len(puntos) < 2:
         if len(puntos) == 1:
             h3_index = h3.latlng_to_cell(puntos[0].latitud, puntos[0].longitud, RESOLUCION_H3)
-            hexagonos_conquistados.add(h3_index)
-        return hexagonos_conquistados
+            hexagonos_strings.add(h3_index)
+        # Convertimos a Enteros antes de devolver
+        return {int(h, 16) for h in hexagonos_strings}
 
     for i in range(len(puntos) - 1):
         p1 = puntos[i]
@@ -42,12 +43,15 @@ def calcular_hexagonos_conquistados(puntos: List[PuntoGPS]) -> set:
         
         try:
             camino = h3.grid_path_cells(h3_inicio, h3_fin)
-            hexagonos_conquistados.update(camino)
+            hexagonos_strings.update(camino)
         except Exception:
-            hexagonos_conquistados.add(h3_inicio)
-            hexagonos_conquistados.add(h3_fin)
+            hexagonos_strings.add(h3_inicio)
+            hexagonos_strings.add(h3_fin)
             
-    return hexagonos_conquistados
+    # --- LA CORRECCIÓN CLAVE ---
+    # Convertimos el texto hexadecimal (ej: '8a39...') a número entero (ej: 622485...)
+    # para que PostgreSQL no se queje.
+    return {int(h, 16) for h in hexagonos_strings}
 
 # --- ENDPOINTS ---
 
@@ -87,8 +91,7 @@ def guardar_carrera(
         cur.execute(sql_ruta, (id_runner_autenticado, distancia_metros, carrera.tiempo_segundos))
         id_ruta = cur.fetchone()[0]
         
-        # B. Guardar Puntos GPS (CORREGIDO PARA TU TABLA)
-        # Calculamos el tiempo relativo (segundos desde el primer punto)
+        # B. Guardar Puntos GPS
         start_time = carrera.puntos[0].timestamp if carrera.puntos else datetime.datetime.now()
         
         sql_puntos = """
@@ -98,7 +101,6 @@ def guardar_carrera(
         
         datos_puntos = []
         for p in carrera.puntos:
-            # Calculamos diferencia en segundos
             delta_seconds = (p.timestamp - start_time).total_seconds()
             datos_puntos.append((id_ruta, p.latitud, p.longitud, p.orden, delta_seconds))
             
@@ -115,7 +117,8 @@ def guardar_carrera(
         
         conquistas_nuevas = 0
         
-        for h3_index in ids_hexagonos:
+        for h3_index_int in ids_hexagonos:
+            # Ahora h3_index_int YA ES un número, así que entrará perfecto en BIGINT
             sql_upsert = """
                 INSERT INTO zona (id_zona, id_runner, id_equipo, color_hex, fecha_conquista)
                 VALUES (%s, %s, %s, %s, NOW())
@@ -125,12 +128,12 @@ def guardar_carrera(
                     color_hex = EXCLUDED.color_hex,
                     fecha_conquista = NOW();
             """
-            cur.execute(sql_upsert, (h3_index, id_runner_autenticado, id_equipo, color_zona))
+            cur.execute(sql_upsert, (h3_index_int, id_runner_autenticado, id_equipo, color_zona))
             
             cur.execute("""
                 INSERT INTO captura_zona (id_zona, id_runner, id_ruta, tipo_captura, puntos_ganados)
                 VALUES (%s, %s, %s, 'NORMAL', 10)
-            """, (h3_index, id_runner_autenticado, id_ruta))
+            """, (h3_index_int, id_runner_autenticado, id_ruta))
             
             conquistas_nuevas += 1
         
