@@ -76,8 +76,7 @@ def guardar_carrera(
     try:
         cur = conn.cursor()
         
-        # A. Guardar la Ruta (CORREGIDO NOMBRES DE COLUMNAS)
-        # Convertimos Km a Metros porque tu DB pide 'distancia_metros'
+        # A. Guardar la Ruta
         distancia_metros = carrera.distancia_km * 1000
         
         sql_ruta = """
@@ -88,12 +87,21 @@ def guardar_carrera(
         cur.execute(sql_ruta, (id_runner_autenticado, distancia_metros, carrera.tiempo_segundos))
         id_ruta = cur.fetchone()[0]
         
-        # B. Guardar Puntos GPS
+        # B. Guardar Puntos GPS (CORREGIDO PARA TU TABLA)
+        # Calculamos el tiempo relativo (segundos desde el primer punto)
+        start_time = carrera.puntos[0].timestamp if carrera.puntos else datetime.datetime.now()
+        
         sql_puntos = """
-            INSERT INTO track_point (id_ruta, latitud, longitud, orden, fecha_hora)
+            INSERT INTO track_point (id_ruta, latitud, longitud, orden, timestamp_relativo)
             VALUES (%s, %s, %s, %s, %s)
         """
-        datos_puntos = [(id_ruta, p.latitud, p.longitud, p.orden, p.timestamp) for p in carrera.puntos]
+        
+        datos_puntos = []
+        for p in carrera.puntos:
+            # Calculamos diferencia en segundos
+            delta_seconds = (p.timestamp - start_time).total_seconds()
+            datos_puntos.append((id_ruta, p.latitud, p.longitud, p.orden, delta_seconds))
+            
         cur.executemany(sql_puntos, datos_puntos)
         
         # C. Actualizar Mapa
@@ -146,7 +154,6 @@ def ver_mis_carreras(id_runner: int):
     
     try:
         cur = conn.cursor()
-        # CORREGIDO NOMBRES DE COLUMNAS PARA SELECT
         sql = """
             SELECT id_ruta, fecha_hora_inicio, distancia_metros, duracion_segundos 
             FROM ruta 
@@ -159,7 +166,6 @@ def ver_mis_carreras(id_runner: int):
         
         lista = []
         for f in filas:
-            # Convertimos metros a km para mostrarlo bonito en la app
             dist_km = f[2] / 1000 if f[2] else 0
             lista.append({
                 "id_ruta": f[0],
