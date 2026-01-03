@@ -26,13 +26,12 @@ class CarreraCreate(BaseModel):
 
 # --- LÓGICA DE CÁLCULO DE TERRITORIO (H3) ---
 def calcular_hexagonos_conquistados(puntos: List[PuntoGPS]) -> set:
-    hexagonos_strings = set() # Guardamos primero los strings que da la librería
+    hexagonos_strings = set()
     
     if len(puntos) < 2:
         if len(puntos) == 1:
             h3_index = h3.latlng_to_cell(puntos[0].latitud, puntos[0].longitud, RESOLUCION_H3)
             hexagonos_strings.add(h3_index)
-        # Convertimos a Enteros antes de devolver
         return {int(h, 16) for h in hexagonos_strings}
 
     for i in range(len(puntos) - 1):
@@ -48,9 +47,6 @@ def calcular_hexagonos_conquistados(puntos: List[PuntoGPS]) -> set:
             hexagonos_strings.add(h3_inicio)
             hexagonos_strings.add(h3_fin)
             
-    # --- LA CORRECCIÓN CLAVE ---
-    # Convertimos el texto hexadecimal (ej: '8a39...') a número entero (ej: 622485...)
-    # para que PostgreSQL no se queje.
     return {int(h, 16) for h in hexagonos_strings}
 
 # --- ENDPOINTS ---
@@ -60,7 +56,7 @@ def guardar_carrera(
     carrera: CarreraCreate,
     id_runner_autenticado: int = Depends(obtener_runner_actual)
 ):
-    """Guarda ruta y conquista territorio"""
+    """Guarda ruta y calcula resultados de batalla detallados"""
     
     # --- 1. ANTI-CHEAT ---
     if carrera.tiempo_segundos <= 0:
@@ -80,9 +76,8 @@ def guardar_carrera(
     try:
         cur = conn.cursor()
         
-        # A. Guardar la Ruta
+        # A. Guardar Ruta
         distancia_metros = carrera.distancia_km * 1000
-        
         sql_ruta = """
             INSERT INTO ruta (id_runner, fecha_hora_inicio, distancia_metros, duracion_segundos) 
             VALUES (%s, NOW(), %s, %s) 
@@ -91,22 +86,19 @@ def guardar_carrera(
         cur.execute(sql_ruta, (id_runner_autenticado, distancia_metros, carrera.tiempo_segundos))
         id_ruta = cur.fetchone()[0]
         
-        # B. Guardar Puntos GPS
+        # B. Guardar Track
         start_time = carrera.puntos[0].timestamp if carrera.puntos else datetime.datetime.now()
-        
         sql_puntos = """
             INSERT INTO track_point (id_ruta, latitud, longitud, orden, timestamp_relativo)
             VALUES (%s, %s, %s, %s, %s)
         """
-        
         datos_puntos = []
         for p in carrera.puntos:
             delta_seconds = (p.timestamp - start_time).total_seconds()
             datos_puntos.append((id_ruta, p.latitud, p.longitud, p.orden, delta_seconds))
-            
         cur.executemany(sql_puntos, datos_puntos)
         
-        # C. Actualizar Mapa
+        # C. Lógica de Guerra (Actualizada para detectar Robos)
         cur.execute("SELECT id_equipo FROM runner_equipo WHERE id_runner = %s", (id_runner_autenticado,))
         res_equipo = cur.fetchone()
         id_equipo = res_equipo[0] if res_equipo else None
@@ -115,10 +107,29 @@ def guardar_carrera(
         if id_equipo == 1: color_zona = "#FF0000"
         elif id_equipo == 2: color_zona = "#0000FF"
         
-        conquistas_nuevas = 0
+        # Contadores para el mensaje final
+        zonas_nuevas = 0    # Antes no había nadie
+        zonas_robadas = 0   # Antes era de otro
+        zonas_defendidas = 0 # Ya era mía
         
         for h3_index_int in ids_hexagonos:
-            # Ahora h3_index_int YA ES un número, así que entrará perfecto en BIGINT
+            # 1. Miramos de quién es la zona AHORA MISMO
+            cur.execute("SELECT id_runner FROM zona WHERE id_zona = %s", (h3_index_int,))
+            res_zona = cur.fetchone()
+            
+            tipo_accion = "CONQUISTA" # Por defecto
+            
+            if res_zona is None:
+                zonas_nuevas += 1
+                tipo_accion = "NUEVA"
+            elif res_zona[0] == id_runner_autenticado:
+                zonas_defendidas += 1
+                tipo_accion = "DEFENSA"
+            else:
+                zonas_robadas += 1
+                tipo_accion = "ROBO"
+
+            # 2. Aplicamos el cambio (UPSERT)
             sql_upsert = """
                 INSERT INTO zona (id_zona, id_runner, id_equipo, color_hex, fecha_conquista)
                 VALUES (%s, %s, %s, %s, NOW())
@@ -130,20 +141,39 @@ def guardar_carrera(
             """
             cur.execute(sql_upsert, (h3_index_int, id_runner_autenticado, id_equipo, color_zona))
             
+            # 3. Guardamos en historial con el tipo correcto
             cur.execute("""
                 INSERT INTO captura_zona (id_zona, id_runner, id_ruta, tipo_captura, puntos_ganados)
-                VALUES (%s, %s, %s, 'NORMAL', 10)
-            """, (h3_index_int, id_runner_autenticado, id_ruta))
+                VALUES (%s, %s, %s, %s, 10)
+            """, (h3_index_int, id_runner_autenticado, id_ruta, tipo_accion))
             
-            conquistas_nuevas += 1
-        
         conn.commit()
         cur.close(); conn.close()
         
+        # D. Generar Mensaje Inteligente para Flutter
+        mensaje_final = "Carrera finalizada."
+        titulo_batalla = "Entrenamiento completado"
+        
+        if zonas_robadas > 0:
+            titulo_batalla = "¡ZONA CONQUISTADA! ⚔️"
+            mensaje_final = f"Has robado {zonas_robadas} zonas al enemigo y capturado {zonas_nuevas} nuevas."
+        elif zonas_nuevas > 0:
+            titulo_batalla = "¡TERRITORIO EXPANDIDO! 🚩"
+            mensaje_final = f"Has reclamado {zonas_nuevas} zonas nuevas para tu equipo."
+        elif zonas_defendidas > 0:
+            titulo_batalla = "DEFENSA EXITOSA 🛡️"
+            mensaje_final = f"Has reforzado {zonas_defendidas} de tus zonas."
+
         return {
-            "mensaje": "Carrera guardada 🏁", 
+            "mensaje": mensaje_final,
+            "titulo": titulo_batalla, # Para que Flutter lo ponga en negrita o grande
             "id_ruta": id_ruta, 
-            "zonas_conquistadas": conquistas_nuevas
+            "estadisticas": {
+                "nuevas": zonas_nuevas,
+                "robadas": zonas_robadas,
+                "defendidas": zonas_defendidas,
+                "total": len(ids_hexagonos)
+            }
         }
 
     except Exception as e:
@@ -152,9 +182,9 @@ def guardar_carrera(
 
 @router.get("/carreras/historial/{id_runner}")
 def ver_mis_carreras(id_runner: int):
+    # (El código del historial sigue igual, no hace falta cambiarlo)
     conn = get_db_connection()
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
-    
     try:
         cur = conn.cursor()
         sql = """
@@ -166,7 +196,6 @@ def ver_mis_carreras(id_runner: int):
         cur.execute(sql, (id_runner,))
         filas = cur.fetchall()
         cur.close(); conn.close()
-        
         lista = []
         for f in filas:
             dist_km = f[2] / 1000 if f[2] else 0
@@ -176,9 +205,7 @@ def ver_mis_carreras(id_runner: int):
                 "distancia": f"{dist_km:.2f} km",
                 "duracion": f"{f[3]} seg"
             })
-            
         return {"historial": lista}
-        
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=500, detail=str(e))
