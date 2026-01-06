@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel
 from src.database import get_db_connection
-from src.dependencies import crear_token_acceso
+from src.dependencies import crear_token_acceso, get_db
+from fastapi.security import OAuth2PasswordRequestForm
 import bcrypt
 import datetime
 import random
@@ -29,6 +30,7 @@ def verificar_password(password_plana, password_encriptada):
     return bcrypt.checkpw(password_plana.encode('utf-8'), password_encriptada.encode('utf-8'))
 
 # --- ENDPOINTS ---
+
 @router.post("/auth/registro", status_code=status.HTTP_201_CREATED)
 def registrar_usuario(nuevo_usuario: RunnerCreate):
     conn = get_db_connection()
@@ -53,14 +55,17 @@ def login(datos_login: LoginRequest):
     
     try:
         cur = conn.cursor()
+        # Buscamos por email
         cur.execute("SELECT id_runner, username, password_hash FROM runner WHERE email = %s", (datos_login.email,))
         user = cur.fetchone()
         cur.close(); conn.close()
         
+        # Verificamos si existe el usuario y si la contraseña coincide
         if not user or not verificar_password(datos_login.password, user[2]):
+            # Lanzamos error 401 (No autorizado)
             raise HTTPException(status_code=401, detail="Credenciales incorrectas")
         
-        # En lugar de solo devolver el ID, generamos el token
+        # Si todo ok, generamos token
         id_runner = user[0]
         access_token = crear_token_acceso(data={"sub":str(id_runner), "name": user[1]})
         
@@ -71,44 +76,40 @@ def login(datos_login: LoginRequest):
             "usuario": {"id": id_runner, "nombre": user[1]}
         }
         
+    except HTTPException as e:
+        raise e # Si es un error HTTP conocido (como el 401), lo dejamos pasar
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) # Si es otro error, lanzamos 500
 
-# MODELOS
-
+# MODELOS PARA RECUPERACIÓN
 class SolicitarRecuperacion(BaseModel):
     email: str
 
 class CambiarPassword(BaseModel):
     email: str
-    token: str  # Usamos tu nombre de columna
+    token: str 
     nueva_password: str
 
-# ENDPOINTS
+# ENDPOINTS DE RECUPERACIÓN
 @router.post("/auth/recuperar/solicitar")
 def solicitar_recuperacion(datos: SolicitarRecuperacion):
-    """Genera un token temporal para tu tabla recuperacion_cuenta"""
     conn = get_db_connection()
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
     
     try:
         cur = conn.cursor()
-        # 1. Verificar runner
         cur.execute("SELECT id_runner FROM runner WHERE email = %s", (datos.email,))
         usuario = cur.fetchone()
         if not usuario: return {"mensaje": "Si el email existe, recibirás el código."}
         
         id_runner = usuario[0]
-        # 2. Generar token corto (ej: AX9Z2)
         token = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
         
-        # 3. Insertar usando TUS columnas (fecha_creacion es automática si la definiste así, sino usamos NOW())
         sql = "INSERT INTO recuperacion_cuenta (id_runner, token, fecha_creacion, usado) VALUES (%s, %s, NOW(), FALSE)"
         cur.execute(sql, (id_runner, token))
         conn.commit()
         cur.close(); conn.close()
         
-        # DEBUG: Te devuelvo el token para probar. En prod, esto se envía por email.
         return {"mensaje": "Token generado (Debug)", "token_debug": token}
         
     except Exception as e:
@@ -117,15 +118,11 @@ def solicitar_recuperacion(datos: SolicitarRecuperacion):
 
 @router.post("/auth/recuperar/validar")
 def restablecer_password(datos: CambiarPassword):
-    """Valida el token (15 min validez) y cambia la password"""
     conn = get_db_connection()
     if not conn: raise HTTPException(status_code=500, detail="Sin conexión DB")
     
     try:
         cur = conn.cursor()
-        
-        # 1. Buscar token válido no usado
-        # Usamos tus columnas: token, fecha_creacion, usado
         sql = """
             SELECT r.id_runner, rc.fecha_creacion, rc.id_recuperacion
             FROM recuperacion_cuenta rc
@@ -140,8 +137,6 @@ def restablecer_password(datos: CambiarPassword):
         
         id_runner, fecha_creacion, id_recuperacion = resultado
         
-        # 2. Verificar expiración en Python (15 minutos desde fecha_creacion)
-        # Aseguramos que ambas fechas tengan zona horaria o sean ingenuas (naive)
         ahora = datetime.datetime.now()
         if fecha_creacion.tzinfo is not None:
              ahora = ahora.astimezone(fecha_creacion.tzinfo)
@@ -149,17 +144,16 @@ def restablecer_password(datos: CambiarPassword):
         if ahora > (fecha_creacion + datetime.timedelta(minutes=15)):
              raise HTTPException(status_code=400, detail="El token ha caducado.")
 
-        # 3. Cambiar password y marcar token
         nueva_pass_hash = encriptar_password(datos.nueva_password)
         cur.execute("UPDATE runner SET password_hash = %s WHERE id_runner = %s", (nueva_pass_hash, id_runner))
-        # Actualizamos usado y fecha_uso
         cur.execute("UPDATE recuperacion_cuenta SET usado = TRUE, fecha_uso = NOW() WHERE id_recuperacion = %s", (id_recuperacion,))
         
         conn.commit()
         cur.close(); conn.close()
         return {"mensaje": "¡Contraseña restablecida! Ya puedes hacer login."}
         
+    except HTTPException as e:
+        raise e
     except Exception as e:
         if conn: conn.rollback()
-        if isinstance(e, HTTPException): raise e
         raise HTTPException(status_code=500, detail=str(e))
