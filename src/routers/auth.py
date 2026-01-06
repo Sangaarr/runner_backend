@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel
 from src.database import get_db_connection
-from src.dependencies import crear_token_acceso, get_db
+from src.dependencies import crear_token_acceso,
 from fastapi.security import OAuth2PasswordRequestForm
 import bcrypt
 import datetime
